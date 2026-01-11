@@ -60,7 +60,7 @@ The current MVP planner supports simple patterns:
 
 Example:
 ```
-/do click_text 地址栏 then type hello world
+/do click_text 地址栏 then type hello
 ```
 
 The bot will always include screenshots before and after execution. UIA actions are preferred; coordinates are only a fallback.
