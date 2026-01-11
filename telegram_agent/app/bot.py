@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 
 from loguru import logger
@@ -11,6 +12,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram_agent.app.auth import is_authorized
 from telegram_agent.app.executor import TaskExecutor, default_tool_registry
 from telegram_agent.app.planner import create_plan
+from telegram_agent.app.tools import system as system_tools
+from telegram_agent.app.tools import uia as uia_tools
 from telegram_agent.app.queue import TaskQueue
 from telegram_agent.app.settings import Settings
 
@@ -22,6 +25,49 @@ async def _reject(update: Update, reason: str) -> None:
 
 def _ensure_audit_dir(settings: Settings) -> None:
     Path(settings.audit_dir).mkdir(parents=True, exist_ok=True)
+
+
+def _write_observation(audit_dir: str, task_id: str, payload: dict[str, object]) -> str:
+    observation_dir = Path(audit_dir) / task_id
+    observation_dir.mkdir(parents=True, exist_ok=True)
+    path = observation_dir / "observation.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(path)
+
+
+def _collect_observation() -> dict[str, object]:
+    observation: dict[str, object] = {}
+    try:
+        observation["active_window"] = system_tools.active_window()
+    except Exception as exc:  # noqa: BLE001
+        observation["active_window_error"] = str(exc)
+    try:
+        observation["display_info"] = system_tools.display_info()
+    except Exception as exc:  # noqa: BLE001
+        observation["display_info_error"] = str(exc)
+    try:
+        observation["uia_dump"] = uia_tools.dump()
+    except Exception as exc:  # noqa: BLE001
+        observation["uia_dump_error"] = str(exc)
+    return observation
+
+
+def _summarize_observation(observation: dict[str, object]) -> dict[str, object]:
+    active_window = observation.get("active_window", {})
+    display_info = observation.get("display_info", {})
+    uia_dump = observation.get("uia_dump", [])
+    if not isinstance(active_window, dict):
+        active_window = {}
+    if not isinstance(display_info, dict):
+        display_info = {}
+    if not isinstance(uia_dump, list):
+        uia_dump = []
+    return {
+        "active_window_title": active_window.get("title", ""),
+        "active_window_process": active_window.get("process", {}).get("name", ""),
+        "monitor_count": len(display_info.get("monitors", [])),
+        "uia_dump_count": len(uia_dump),
+    }
 
 
 def _format_plan(plan_json: str) -> str:
@@ -92,7 +138,10 @@ async def do_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     task_text = " ".join(context.args)
-    plan = create_plan(task_text)
+    task_id = str(uuid.uuid4())
+    observation = _collect_observation()
+    _write_observation(settings.audit_dir, task_id, observation)
+    plan = create_plan(task_text, _summarize_observation(observation))
     queue: TaskQueue = context.bot_data["queue"]
     task_id = queue.create_task(
         chat_id=update.effective_chat.id,
@@ -100,6 +149,7 @@ async def do_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         command=task_text,
         plan_json=plan.to_json(),
         timeout_seconds=settings.task_timeout_seconds,
+        task_id=task_id,
     )
 
     await update.effective_chat.send_message(

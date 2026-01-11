@@ -38,7 +38,7 @@ POLL_INTERVAL_SECONDS=2
 ```bash
 python -m venv .venv
 .\.venv\Scripts\activate
-pip install python-telegram-bot==20.7 mss loguru pydantic-settings pywinauto pyautogui
+pip install -r telegram_agent/requirements.txt
 ```
 
 ## Run
@@ -52,12 +52,15 @@ python -m telegram_agent.app.bot
 
 ## Task planning notes
 The current MVP planner supports simple patterns:
-- `click <x> <y>`
+- `click_text <text>` (UIA-first, fuzzy match)
+- `click_uia <automation_id>`
+- `click_path <path>`
+- `click <x> <y>` (coordinate fallback)
 - `type <text>`
 
 Example:
 ```
-/do click 120 400 then type hello world
+/do click_text 地址栏 then type hello world
 ```
 
-The bot will always include screenshots before and after execution.
+The bot will always include screenshots before and after execution. UIA actions are preferred; coordinates are only a fallback.

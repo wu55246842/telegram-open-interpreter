@@ -49,8 +49,16 @@ class TaskQueue:
                 """
             )
 
-    def create_task(self, chat_id: int, user_id: int, command: str, plan_json: str, timeout_seconds: int) -> str:
-        task_id = str(uuid.uuid4())
+    def create_task(
+        self,
+        chat_id: int,
+        user_id: int,
+        command: str,
+        plan_json: str,
+        timeout_seconds: int,
+        task_id: str | None = None,
+    ) -> str:
+        task_id = task_id or str(uuid.uuid4())
         now = time.time()
         with self._connect() as conn:
             conn.execute(

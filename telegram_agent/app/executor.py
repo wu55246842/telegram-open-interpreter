@@ -79,6 +79,8 @@ class TaskExecutor:
                     tool(step.args["text"])
                 elif step.action == "uia.focus_window":
                     result["focused"] = tool(step.args["title_substring"])
+                elif step.action in {"uia.click_text", "uia.click_automation_id", "uia.click_path"}:
+                    self._execute_with_error_screenshot(step.action, tool, step.args, task_id, send_photo)
                 elif step.action == "log.note":
                     logger.info("NOTE: {}", step.args.get("message", ""))
                 else:
@@ -90,6 +92,21 @@ class TaskExecutor:
 
         return {"task": payload["task"], "steps": results}
 
+    def _execute_with_error_screenshot(
+        self,
+        action: str,
+        func: ToolFunc,
+        args: dict[str, Any],
+        task_id: str,
+        send_photo: Callable[[str], None],
+    ) -> None:
+        try:
+            func(**args)
+        except Exception as exc:  # noqa: BLE001
+            path = screen_tools.capture_screen(self.audit_dir, task_id, "error")
+            send_photo(path)
+            raise RuntimeError(f"{action} failed: {exc}") from exc
+
 
 def default_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
@@ -97,5 +114,9 @@ def default_tool_registry() -> ToolRegistry:
     registry.register("input.click", input_tools.click)
     registry.register("input.type", input_tools.type_text)
     registry.register("uia.focus_window", uia_tools.focus_window)
+    registry.register("uia.dump", uia_tools.dump)
+    registry.register("uia.click_text", uia_tools.click_text)
+    registry.register("uia.click_automation_id", uia_tools.click_automation_id)
+    registry.register("uia.click_path", uia_tools.click_path)
     registry.register("log.note", lambda message: logger.info("NOTE: {}", message))
     return registry
