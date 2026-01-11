@@ -28,7 +28,7 @@ class TaskQueue:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path, check_same_thread=False)
+        return sqlite3.connect(self.db_path, check_same_thread=False, timeout=10)
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -48,6 +48,8 @@ class TaskQueue:
                 )
                 """
             )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
 
     def create_task(
         self,
@@ -72,6 +74,19 @@ class TaskQueue:
 
     def approve_task(self, task_id: str) -> bool:
         return self._update_status(task_id, "queued", expected="pending_approval")
+
+    def update_plan(self, task_id: str, plan_json: str) -> bool:
+        now = time.time()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE tasks
+                SET plan_json = ?, updated_at = ?
+                WHERE task_id = ? AND status = 'pending_approval'
+                """,
+                (plan_json, now, task_id),
+            )
+        return cursor.rowcount > 0
 
     def cancel_task(self, task_id: str) -> bool:
         return self._update_status(task_id, "cancelled")
