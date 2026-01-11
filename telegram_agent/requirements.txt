@@ -1,0 +1,7 @@
+loguru
+mss
+psutil
+pyautogui
+pydantic-settings
+python-telegram-bot==20.7
+pywinauto
