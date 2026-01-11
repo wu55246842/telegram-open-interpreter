@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from pathlib import Path
 
 from loguru import logger
@@ -12,6 +11,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram_agent.app.auth import is_authorized
 from telegram_agent.app.executor import TaskExecutor, default_tool_registry
 from telegram_agent.app.planner import create_plan
+from telegram_agent.app.tools import screen as screen_tools
 from telegram_agent.app.tools import system as system_tools
 from telegram_agent.app.tools import uia as uia_tools
 from telegram_agent.app.queue import TaskQueue
@@ -35,8 +35,16 @@ def _write_observation(audit_dir: str, task_id: str, payload: dict[str, object])
     return str(path)
 
 
-def _collect_observation() -> dict[str, object]:
+def _collect_observation(audit_dir: str, task_id: str) -> dict[str, object]:
     observation: dict[str, object] = {}
+    try:
+        observation["screenshot_path"] = screen_tools.capture_screen(
+            audit_dir,
+            task_id,
+            label="before_plan",
+        )
+    except Exception as exc:  # noqa: BLE001
+        observation["screenshot_error"] = str(exc)
     try:
         observation["active_window"] = system_tools.active_window()
     except Exception as exc:  # noqa: BLE001
@@ -46,8 +54,9 @@ def _collect_observation() -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001
         observation["display_info_error"] = str(exc)
     try:
-        observation["uia_dump"] = uia_tools.dump()
+        observation["uia_dump"] = uia_tools.dump(max_items=200)
     except Exception as exc:  # noqa: BLE001
+        observation["uia_dump"] = []
         observation["uia_dump_error"] = str(exc)
     return observation
 
@@ -138,19 +147,23 @@ async def do_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     task_text = " ".join(context.args)
-    task_id = str(uuid.uuid4())
-    observation = _collect_observation()
-    _write_observation(settings.audit_dir, task_id, observation)
-    plan = create_plan(task_text, _summarize_observation(observation))
     queue: TaskQueue = context.bot_data["queue"]
+    placeholder_plan_json = json.dumps({"task": task_text, "steps": []}, ensure_ascii=False)
     task_id = queue.create_task(
         chat_id=update.effective_chat.id,
         user_id=update.effective_user.id,
         command=task_text,
-        plan_json=plan.to_json(),
+        plan_json=placeholder_plan_json,
         timeout_seconds=settings.task_timeout_seconds,
-        task_id=task_id,
     )
+    observation = _collect_observation(settings.audit_dir, task_id)
+    _write_observation(settings.audit_dir, task_id, observation)
+    plan = create_plan(task_text, observation)
+    if not queue.update_plan(task_id, plan.to_json()):
+        await update.effective_chat.send_message(
+            text=f"Failed to update plan for task_id={task_id}. Please try again."
+        )
+        return
 
     await update.effective_chat.send_message(
         text=f"Plan created for task_id={task_id}. Use /approve {task_id} to execute.\n{_format_plan(plan.to_json())}"
