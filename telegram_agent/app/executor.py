@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -61,30 +62,39 @@ class TaskExecutor:
                 if time.monotonic() - started_at > timeout_seconds:
                     raise RuntimeError("Task timeout reached")
 
-                tool = self.tool_registry.get(step.action)
-                if tool is None:
-                    raise RuntimeError(f"Tool not allowed: {step.action}")
-
                 send_update(f"Executing step {step.step_id}: {step.action}")
                 logger.info("Executing step {} with args {}", step.action, step.args)
 
-                result: dict[str, Any] = {"step": step.step_id, "action": step.action}
-                if step.action == "screen.capture":
-                    path = tool(self.audit_dir, task_id, step.args.get("label", "step"))
-                    result["screenshot"] = path
-                    send_photo(path)
-                elif step.action == "input.click":
-                    tool(step.args["x"], step.args["y"])
-                elif step.action == "input.type":
-                    tool(step.args["text"])
-                elif step.action == "uia.focus_window":
-                    result["focused"] = tool(step.args["title_substring"])
-                elif step.action in {"uia.click_text", "uia.click_automation_id", "uia.click_path"}:
-                    self._execute_with_error_screenshot(step.action, tool, step.args, task_id, send_photo)
-                elif step.action == "log.note":
-                    logger.info("NOTE: {}", step.args.get("message", ""))
-                else:
-                    tool(**step.args)
+                result: dict[str, Any] = {
+                    "step": step.step_id,
+                    "action": step.action,
+                    "args": step.args,
+                    "ok": False,
+                }
+                try:
+                    tool = self.tool_registry.get(step.action)
+                    if tool is None:
+                        raise RuntimeError(f"Tool not allowed: {step.action}")
+
+                    if step.action == "screen.capture":
+                        label = step.args.get("label", "step")
+                        path = screen_tools.capture_screen(self.audit_dir, task_id, label=label)
+                        send_photo(path)
+                        result["output"] = path
+                    else:
+                        output = tool(**step.args)
+                        if output is not None:
+                            result["output"] = output
+                    result["ok"] = True
+                except Exception as exc:  # noqa: BLE001
+                    result["error"] = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                    self._capture_error_screenshot(task_id, step.step_id, send_photo)
+                    results.append(result)
+                    raise RuntimeError(f"{step.action} failed: {exc}") from exc
 
                 results.append(result)
         finally:
@@ -92,20 +102,23 @@ class TaskExecutor:
 
         return {"task": payload["task"], "steps": results}
 
-    def _execute_with_error_screenshot(
+    def _capture_error_screenshot(
         self,
-        action: str,
-        func: ToolFunc,
-        args: dict[str, Any],
         task_id: str,
+        step_id: int,
         send_photo: Callable[[str], None],
     ) -> None:
+        label = f"error_step_{step_id}"
         try:
-            func(**args)
-        except Exception as exc:  # noqa: BLE001
-            path = screen_tools.capture_screen(self.audit_dir, task_id, "error")
-            send_photo(path)
-            raise RuntimeError(f"{action} failed: {exc}") from exc
+            path = screen_tools.capture_screen(self.audit_dir, task_id, label=label)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to capture error screenshot for step {}", step_id)
+            return
+        send_photo(path)
+
+
+def log_note(message: str) -> None:
+    logger.info("NOTE: {}", message)
 
 
 def default_tool_registry() -> ToolRegistry:
@@ -118,5 +131,5 @@ def default_tool_registry() -> ToolRegistry:
     registry.register("uia.click_text", uia_tools.click_text)
     registry.register("uia.click_automation_id", uia_tools.click_automation_id)
     registry.register("uia.click_path", uia_tools.click_path)
-    registry.register("log.note", lambda message: logger.info("NOTE: {}", message))
+    registry.register("log.note", log_note)
     return registry
