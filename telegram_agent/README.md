@@ -63,4 +63,9 @@ Example:
 /do click_text 地址栏 then type hello
 ```
 
-The bot will always include screenshots before and after execution. UIA actions are preferred; coordinates are only a fallback.
+Example with hotkey:
+```
+/do click_text 地址栏 then type hello then hotkey enter
+```
+
+The bot will always include screenshots before and after execution. UIA actions (click_text/uia tools) are preferred; coordinate clicks are only a fallback.

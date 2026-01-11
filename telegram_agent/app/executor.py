@@ -78,7 +78,13 @@ class TaskExecutor:
 
                     if step.action == "screen.capture":
                         label = step.args.get("label", "step")
-                        path = screen_tools.capture_screen(self.audit_dir, task_id, label=label)
+                        monitor_index = step.args.get("monitor_index", 0)
+                        path = screen_tools.capture_screen(
+                            self.audit_dir,
+                            task_id,
+                            label=label,
+                            monitor_index=monitor_index,
+                        )
                         send_photo(path)
                         result["output"] = path
                     else:
@@ -126,6 +132,8 @@ def default_tool_registry() -> ToolRegistry:
     registry.register("screen.capture", screen_tools.capture_screen)
     registry.register("input.click", input_tools.click)
     registry.register("input.type", input_tools.type_text)
+    registry.register("input.hotkey", input_tools.hotkey)
+    registry.register("wait.sleep", input_tools.sleep)
     registry.register("uia.focus_window", uia_tools.focus_window)
     registry.register("uia.dump", uia_tools.dump)
     registry.register("uia.click_text", uia_tools.click_text)
